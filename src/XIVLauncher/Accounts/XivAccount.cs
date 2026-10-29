@@ -1,4 +1,4 @@
-﻿using AdysTech.CredentialManager;
+using AdysTech.CredentialManager;
 using Newtonsoft.Json;
 using System.ComponentModel;
 using System.Net;
@@ -9,6 +9,8 @@ namespace XIVLauncher.Accounts
     {
         private const string CREDS_PREFIX_OLD = "FINAL FANTASY XIV";
         private const string CREDS_PREFIX_NEW = "XIVLAUNCHER";
+        // Not "XIVLAUNCHER-TOTP": credential targets are case-insensitive and could collide with the password of an SE ID named "totp-..."
+        private const string CREDS_PREFIX_TOTP = "XIVLAUNCHER_TOTP";
 
         [JsonIgnore]
         public string Id => $"{UserName}-{UseOtp}-{UseSteamServiceAccount}";
@@ -79,6 +81,41 @@ namespace XIVLauncher.Accounts
                         Password = value
                     });
                 }
+            }
+        }
+
+        [JsonIgnore]
+        public string TotpUri
+        {
+            get => GetTotpUri(UserName);
+            set => SetTotpUri(UserName, value);
+        }
+
+
+        public static string GetTotpUri(string userName)
+        {
+            var credentials = CredentialManager.GetCredentials($"{CREDS_PREFIX_TOTP}-{userName.ToLower()}");
+            return credentials?.Password;
+        }
+
+        public static void SetTotpUri(string userName, string value)
+        {
+            try
+            {
+                CredentialManager.RemoveCredentials($"{CREDS_PREFIX_TOTP}-{userName.ToLower()}");
+            }
+            catch (Win32Exception)
+            {
+                // ignored
+            }
+
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                CredentialManager.SaveCredentials($"{CREDS_PREFIX_TOTP}-{userName.ToLower()}", new NetworkCredential
+                {
+                    UserName = userName,
+                    Password = value
+                });
             }
         }
 

@@ -12,6 +12,10 @@ using XIVLauncher.Common.Http;
 using XIVLauncher.Common.Util;
 using XIVLauncher.Windows.ViewModel;
 
+using System.ComponentModel;
+using MaterialDesignThemes.Wpf;
+using XIVLauncher.Accounts;
+
 namespace XIVLauncher.Windows
 {
     /// <summary>
@@ -83,6 +87,9 @@ namespace XIVLauncher.Windows
 
         public void TryAcceptOtp(string otp)
         {
+            if (!TryApplyTotp(otp, out otp))
+                return;
+
             if (otp.Length != 6)
             {
                 Log.Error("Malformed OTP: {Otp}", otp);
@@ -182,10 +189,10 @@ namespace XIVLauncher.Windows
             PlatformHelpers.OpenBrowser($"https://goatcorp.github.io/faq/mobile_otp");
         }
 
-        public static string AskForOtp(Action<OtpInputDialog, string> onOtpResult, Window parentWindow)
+        public static string AskForOtp(Action<OtpInputDialog, string> onOtpResult, Window parentWindow, string userName = null, bool doingAutoLogin = false)
         {
             if (Dispatcher.CurrentDispatcher != parentWindow.Dispatcher)
-                return parentWindow.Dispatcher.Invoke(() => AskForOtp(onOtpResult, parentWindow));
+                return parentWindow.Dispatcher.Invoke(() => AskForOtp(onOtpResult, parentWindow, userName, doingAutoLogin));
 
             var dialog = new OtpInputDialog();
             if (parentWindow.IsVisible)
@@ -196,7 +203,156 @@ namespace XIVLauncher.Windows
 
             string result = null;
             dialog.OnResult += otp => onOtpResult(dialog, result = otp);
+
+            dialog.InitializeTotp(userName);
+            if (doingAutoLogin && dialog.TrySilentAccept())
+                return result;
+
             return dialog.ShowDialog() == true ? result : null;
         }
+
+        #region Automatic TOTP
+
+        private string _totpUserName;
+        private string _savedTotpUri;
+        private Totp _totp;
+        private DispatcherTimer _totpHintTimer;
+
+        private void InitializeTotp(string userName)
+        {
+            _totpUserName = userName;
+
+            if (userName == null)
+            {
+                TotpUriPasswordBox.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            try
+            {
+                _savedTotpUri = XivAccount.GetTotpUri(userName);
+            }
+            catch (Win32Exception ex)
+            {
+                Log.Error(ex, "Could not read TOTP secret");
+            }
+
+            // Triggers TotpUriPasswordBox_OnPasswordChanged, which parses the URI
+            TotpUriPasswordBox.Password = _savedTotpUri ?? string.Empty;
+
+            _totpHintTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _totpHintTimer.Tick += (_, _) => UpdateTotpHint();
+
+            // The dialog is hidden rather than closed when done, so tie the timer to visibility
+            IsVisibleChanged += (_, _) =>
+            {
+                if (IsVisible)
+                    _totpHintTimer.Start();
+                else
+                    _totpHintTimer.Stop();
+            };
+        }
+
+        /// <summary>
+        /// Like a saved password, submit the computed code without showing the dialog.
+        /// A failed login disables auto-login, so the next attempt will show the dialog.
+        /// </summary>
+        /// <returns>False if no TOTP secret is available, or the code was rejected by the result handler.</returns>
+        private bool TrySilentAccept()
+        {
+            if (_totp == null)
+                return false;
+
+            _ignoreCurrentOtp = false;
+            OnResult?.Invoke(_totp.Compute(DateTimeOffset.UtcNow));
+
+            if (_ignoreCurrentOtp)
+                return false;
+
+            Log.Information("Submitted TOTP automatically");
+            Close();
+            return true;
+        }
+
+        /// <summary>
+        /// Validate and persist the entered TOTP URI, and fill in the computed code if none was entered.
+        /// </summary>
+        /// <returns>False if the entered URI is invalid.</returns>
+        private bool TryApplyTotp(string otp, out string result)
+        {
+            result = otp;
+
+            if (_totpUserName == null)
+                return true;
+
+            var resolved = otp;
+            var valid = Dispatcher.Invoke(() =>
+            {
+                var totpUri = TotpUriPasswordBox.Password.Trim();
+
+                if (totpUri.Length > 0 && _totp == null)
+                {
+                    OtpInputPrompt.Text = ViewModel.OtpInputPromptBadTotpUriLoc;
+                    OtpInputPrompt.Foreground = Brushes.Red;
+                    Storyboard myStoryboard = (Storyboard)OtpInputPrompt.Resources["InvalidShake"];
+                    Storyboard.SetTarget(myStoryboard.Children.ElementAt(0), OtpInputPrompt);
+                    myStoryboard.Begin();
+                    TotpUriPasswordBox.Focus();
+                    return false;
+                }
+
+                if (totpUri != (_savedTotpUri ?? string.Empty))
+                {
+                    try
+                    {
+                        XivAccount.SetTotpUri(_totpUserName, totpUri);
+                        _savedTotpUri = totpUri;
+                    }
+                    catch (Win32Exception ex)
+                    {
+                        Log.Error(ex, "Could not save TOTP secret");
+                    }
+                }
+
+                if (string.IsNullOrEmpty(resolved) && _totp != null)
+                    resolved = _totp.Compute(DateTimeOffset.UtcNow);
+
+                return true;
+            });
+
+            result = resolved;
+            return valid;
+        }
+
+        private void UpdateTotpHint()
+        {
+            HintAssist.SetHint(OtpTextBox, _totp?.Compute(DateTimeOffset.UtcNow) ?? string.Empty);
+        }
+
+        private void TotpUriPasswordBox_OnPasswordChanged(object sender, RoutedEventArgs e)
+        {
+            Totp.TryParse(TotpUriPasswordBox.Password, out _totp);
+            UpdateTotpHint();
+        }
+
+        private void TotpUriPasswordBox_OnGotFocus(object sender, RoutedEventArgs e)
+        {
+            // Stop the window's GotFocus handler from moving focus back to OtpTextBox
+            e.Handled = true;
+        }
+
+        private void TotpUriPasswordBox_OnKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                Cancel();
+            }
+            else if (e.Key == Key.Enter)
+            {
+                TryAcceptOtp(this.OtpTextBox.Text);
+            }
+        }
+
+        #endregion
     }
 }

@@ -284,7 +284,7 @@ namespace XIVLauncher.Windows.ViewModel
                         otpDialog.IgnoreCurrentResult(Loc.Localize("DuplicateOtpAfterSuccess",
                                                                    "This OTP has been already used.\nIt may take up to 30 seconds for a new one."));
                     }
-                }, _window);
+                }, _window, username, doingAutoLogin);
             }
 
             if (otp == null)

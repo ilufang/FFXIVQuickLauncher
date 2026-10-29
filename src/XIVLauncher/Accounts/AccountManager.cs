@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
@@ -73,6 +73,7 @@ namespace XIVLauncher.Accounts
         public void RemoveAccount(XivAccount account)
         {
             account.Password = string.Empty;
+            account.TotpUri = string.Empty;
             Accounts.Remove(account);
         }
 
