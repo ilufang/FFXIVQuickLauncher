@@ -14,6 +14,7 @@
     <Deterministic>true</Deterministic>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <StartupObject>XIVLauncher.Program</StartupObject>
+    <Configurations>Debug;Release;ReleaseNoUpdate</Configurations>
   </PropertyGroup>
 
   <!-- Assets -->
@@ -32,6 +33,8 @@
 
   <PropertyGroup Condition=" '$(Configuration)' == 'ReleaseNoUpdate' ">
     <DefineConstants>TRACE;XL_NOAUTOUPDATE</DefineConstants>
+    <!-- The SDK only enables optimizations for a configuration named exactly "Release" -->
+    <Optimize>true</Optimize>
   </PropertyGroup>
 
   <ItemGroup>
